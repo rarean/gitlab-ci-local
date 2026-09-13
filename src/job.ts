@@ -450,6 +450,11 @@ If you know what you're doing and would like to suppress this warning, use one o
             "0 ms";
     }
 
+    /** Elapsed `[seconds, nanoseconds]` pair between job start and end, `null` for jobs that never ended. */
+    get durationHrtime (): [number, number] | null {
+        return this._endTime ?? null;
+    }
+
     get formattedJobName () {
         let prefix = "";
         if (this.argv.childPipelineDepth > 0) prefix = "\t".repeat(this.argv.childPipelineDepth) + `[${this.argv.variable.GCL_TRIGGERER}] -> `;
