@@ -1,0 +1,25 @@
+manual-latest:
+  stage: test
+  image: docker.io/library/alpine:latest
+  when: manual
+  script: echo "never runs"
+
+manual-latest-duplicate:
+  stage: test
+  image: docker.io/library/alpine:latest
+  when: manual
+  script: echo "never runs"
+
+manual-tag:
+  stage: test
+  image: docker.io/library/alpine:3.20
+  when: manual
+  script: echo "never runs"
+
+manual-service:
+  stage: test
+  image: docker.io/library/alpine:3.20
+  services:
+    - name: postgres:16
+  when: manual
+  script: echo "never runs"

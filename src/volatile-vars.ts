@@ -1,10 +1,14 @@
 /**
  * Predefined variables whose values change on every run or reference the local
- * machine. They are excluded from the job memoization fingerprint, since two
- * invocations that differ only in these variables produce identical results.
+ * machine. Classification rule: a variable is volatile when its value differs
+ * between two runs of the same commit on the same machine. They are excluded
+ * from the job memoization fingerprint, since two invocations that differ only
+ * in these variables produce identical results.
  *
  * User-supplied variables (`--variable`, gitlab-ci files) are always hashed.
- * Phase 3 (determinism) reuses this list.
+ * tests/job-cache.test.ts walks the predefined-variables table and fails on
+ * any variable left unclassified, so new GitLab variables cannot silently
+ * become fingerprint inputs.
  */
 export const VOLATILE_VARIABLES: ReadonlySet<string> = new Set([
     // Run-specific identifiers

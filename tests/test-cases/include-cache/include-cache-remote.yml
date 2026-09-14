@@ -1,0 +1,3 @@
+cache-remote-job:
+  stage: test
+  script: echo "Remote include content"

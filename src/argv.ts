@@ -467,4 +467,17 @@ export class Argv {
     get registry (): boolean {
         return this.map.get("registry") ?? false;
     }
+
+    get deterministic (): "warn" | "strict" | null {
+        const val = this.map.get("deterministic");
+        if (val == null || val === false) return null;
+        // `--deterministic` without a value warns; `--deterministic=strict` fails.
+        if (val === true || val === "") return "warn";
+        assert(val === "warn" || val === "strict", "--deterministic must be 'warn' or 'strict'");
+        return val;
+    }
+
+    get isolated (): boolean {
+        return this.map.get("isolated") ?? false;
+    }
 }

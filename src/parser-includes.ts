@@ -6,7 +6,7 @@ import {GitData} from "./git-data.js";
 import assert, {AssertionError} from "node:assert";
 import chalk from "chalk-template";
 import {Parser} from "./parser.js";
-import axios from "axios";
+import {IncludeCache} from "./include-cache.js";
 import path from "node:path";
 import prettyHrtime from "pretty-hrtime";
 import semver from "semver";
@@ -89,7 +89,7 @@ export class ParserIncludes {
         );
         let includeDatas: any[] = [];
         const promises = [];
-        const {stateDir, cwd, fetchIncludes, gitData, expandVariables, writeStreams} = opts;
+        const {stateDir, cwd, gitData, expandVariables, writeStreams} = opts;
         // cache the parsed component, because parseIncludeComponent is expensive and we would call it twice otherwise
         const componentParseCache = new Map<number, ParsedComponent>();
 
@@ -112,9 +112,9 @@ export class ParserIncludes {
             } else if (value["template"]) {
                 const {project, ref, file, domain} = this.covertTemplateToProjectFile(value["template"]);
                 const url = `https://${domain}/${project}/-/raw/${ref}/${file}`;
-                promises.push(this.downloadIncludeRemote(cwd, stateDir, url, fetchIncludes, writeStreams));
+                promises.push(this.downloadIncludeRemote(opts, url));
             } else if (value["remote"]) {
-                promises.push(this.downloadIncludeRemote(cwd, stateDir, value["remote"], fetchIncludes, writeStreams));
+                promises.push(this.downloadIncludeRemote(opts, value["remote"]));
             } else if (value["component"]) {
                 const component = this.parseIncludeComponent(value["component"], gitData);
                 promises.push((async () => {
@@ -365,17 +365,40 @@ export class ParserIncludes {
         return updatedIncludes;
     }
 
-    static async downloadIncludeRemote (cwd: string, stateDir: string, url: string, fetchIncludes: boolean, writeStreams: WriteStreams): Promise<void> {
+    static async downloadIncludeRemote (opts: ParserIncludesInitOptions, url: string): Promise<void> {
+        const {cwd, stateDir, fetchIncludes, writeStreams} = opts;
         const fsUrl = Utils.fsUrl(url);
+        const target = `${cwd}/${stateDir}/includes/${fsUrl}`;
+        const time = process.hrtime();
         try {
-            const target = `${cwd}/${stateDir}/includes/${fsUrl}`;
+            if (opts.argv.deterministic) {
+                // Pinned to first-fetch: a cached entry is served without network.
+                const cached = await IncludeCache.read(cwd, stateDir, url);
+                if (cached) {
+                    await fs.outputFile(target, cached.content);
+                    writeStreams.stderr(chalk`{grey ${url} served from include cache}\n`);
+                    return;
+                }
+                const {content, etag} = await IncludeCache.fetch(url);
+                await IncludeCache.write(cwd, stateDir, url, content, etag);
+                await fs.outputFile(target, content);
+                writeStreams.stderr(chalk`{grey downloaded ${url} in ${prettyHrtime(process.hrtime(time))}}\n`);
+                return;
+            }
+
             if (await fs.pathExists(target) && !fetchIncludes) return;
-            const time = process.hrtime();
-            const res = await axios.get(url, {
-                headers: {"User-Agent": "gitlab-ci-local"},
-                ...Utils.getAxiosProxyConfig(),
-            });
-            await fs.outputFile(target, res.data);
+            // Refetch path: revalidate when the server supports it, so a stable
+            // URL costs a 304 instead of a full body transfer.
+            const cached = await IncludeCache.read(cwd, stateDir, url);
+            const {notModified, content, etag} = await IncludeCache.fetch(url, cached?.etag ?? null);
+            if (notModified) {
+                if (!cached) throw new Error("Server answered 304 without a cached body");
+                await fs.outputFile(target, cached.content);
+                writeStreams.stderr(chalk`{grey ${url} not modified}\n`);
+                return;
+            }
+            await IncludeCache.write(cwd, stateDir, url, content, etag);
+            await fs.outputFile(target, content);
             writeStreams.stderr(chalk`{grey downloaded ${url} in ${prettyHrtime(process.hrtime(time))}}\n`);
         } catch (e) {
             throw new AssertionError({message: `Remote include could not be fetched ${url}\n${e}`});

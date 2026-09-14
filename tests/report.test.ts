@@ -46,6 +46,7 @@ const reportJob = (overrides: any = {}): Job => ({
     safeJobName: "my-job",
     services: [],
     artifacts: null,
+    cached: false,
     ...overrides,
 } as unknown as Job);
 

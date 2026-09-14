@@ -37,6 +37,8 @@ Get rid of all those dev specific shell scripts and make files.
     * [Listing jobs](#list-pipeline-jobs)
     * [Run report](#run-report)
     * [Job memoization](#job-memoization)
+    * [Determinism mode](#determinism-mode)
+    * [Isolated runs](#isolated-runs)
 * [Quirks](#quirks)
     * [Tracked Files](#tracked-files)
     * [Local Only](#local-only)
@@ -316,6 +318,59 @@ Notes:
 - This is unrelated to the GitLab `cache:` keyword, which keeps working exactly as before.
 - `--no-cache` disables reads and writes for one invocation.
 - `--clear-cache` deletes `<stateDir>/cache/` and exits.
+
+### Determinism Mode
+
+#### --deterministic
+
+`gitlab-ci-local --deterministic[=strict|warn]` adds tooling to pin and verify that a pipeline result reflects your
+edits rather than environmental drift. Bare `--deterministic` means `warn`; `--deterministic=strict` fails the
+invocation instead. It works in every mode that parses the pipeline — including `--list-json`, so agents get a cheap
+"is this pipeline reproducibly specified" gate without running anything.
+
+Two effects:
+
+1. **Unpinned image check.** A reference counts as pinned iff it carries an immutable digest (`image@sha256:...`);
+   any plain tag (`alpine:3.20`) floats, and `alpine:latest` doubly so. Job images and services are validated in
+   their *expanded* form, so a variable that resolves to a digest pins the reference. The effective `--helper-image`
+   and `--wait-image` values are validated too (only when some job actually uses a container or a service), as is
+   `--default-image` (when some imageless job would run in a container). Shell-executor jobs without an image are
+   vacuously fine. `warn` prints one deduplicated warning per offending reference; `strict` fails before any
+   container starts, listing every violation so they can all be fixed in one pass.
+2. **Remote include cache.** `include:remote` and `include:template` bodies are cached under
+   `<stateDir>/include-cache/` keyed by url hash. In deterministic mode a cached entry is served **without any
+   network access** — includes are pinned to first-fetch for the lifetime of the state dir. Combine with
+   `--isolated` (below) when you want explicit freshness instead. Without the flag, behavior is unchanged: the
+   on-disk include is reused as today, and the `--fetch-includes` refetch revalidates via the stored `ETag`
+   (`If-None-Match` → 304 reuses the body), which is a pure latency optimization.
+
+Notes:
+
+- This is a check, not a mutation — gitlab-ci-local never rewrites your `.gitlab-ci.yml` and never resolves digests
+  for you.
+- Local includes and `include:local` globs are filesystem reads and are never cached; they always reflect the
+  working tree.
+- The include cache key is the absolute URL. The default state dir is per-project (`.gitlab-ci-local/`), so two
+  projects share a cache entry only if they share a `--state-dir`.
+- Pinning the *inputs* does not make flaky tests stop flaking — it makes reruns comparable, not deterministic in
+  behavior.
+
+### Isolated Runs
+
+#### --isolated
+
+`gitlab-ci-local --isolated` runs the whole invocation in a fresh temporary state dir and removes it on every exit
+path — normal completion, failing jobs, errors, and interrupts. Nothing from prior runs is read (fresh
+`pipelineIid`, no memoization entries, no include cache, no leftover services output), and nothing is written back.
+
+- Without `--state-dir`, the temp dir is created under the OS temp dir; when `--state-dir` is given it is created
+  next to it (`<stateDir>-isolated-XXXX`), on the same volume as the project. Either way your real state dir is
+  never touched.
+- Determinism mode + `--isolated` is the "reproduce from scratch" combination: fresh fetch of every remote include,
+  pinned-image check, zero residue. Note `--isolated` forces job-memoization cache misses (the cache lives in the
+  state dir) — use it for verification runs, not iteration loops.
+- `--report-json` still works and is written to the path you give it, but `logPath` entries in the report point
+  into the temp dir, which is gone by the time you read them.
 
 ## Quirks
 

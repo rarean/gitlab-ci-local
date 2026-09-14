@@ -11,6 +11,7 @@ import {Executor} from "./executor.js";
 import {Argv, stripGclVariableEnvVars, injectGclVariableEnvVars} from "./argv.js";
 import {AssertionError} from "assert";
 import {Job, cleanupJobResources} from "./job.js";
+import {cleanupIsolatedStateDirs} from "./isolated.js";
 import {GitlabRunnerPresetValues} from "./gitlab-preset.js";
 import packageJson from "../package.json";
 
@@ -21,7 +22,12 @@ let cleanupAndExitPromise: Promise<void> | null = null;
 async function cleanupAndExit (code: number) {
     // First caller's exit code wins — subsequent callers join the in-flight cleanup.
     if (cleanupAndExitPromise) return cleanupAndExitPromise;
-    cleanupAndExitPromise = cleanupJobResources(jobs).finally(() => process.exit(code));
+    cleanupAndExitPromise = (async () => {
+        await Promise.all([
+            cleanupJobResources(jobs),
+            cleanupIsolatedStateDirs(),
+        ]);
+    })().finally(() => process.exit(code));
     return cleanupAndExitPromise;
 }
 
@@ -263,6 +269,16 @@ process.on("SIGUSR2", async () => {
         .option("clear-cache", {
             type: "boolean",
             description: "Delete the state dir cache folder, then exit",
+            requiresArg: false,
+        })
+        .option("deterministic", {
+            type: "string",
+            description: "Determinism mode: warn (default) or fail on unpinned image references; also serves remote includes from cache without network",
+            requiresArg: false,
+        })
+        .option("isolated", {
+            type: "boolean",
+            description: "Run in a fresh temporary state dir that is removed when the invocation exits",
             requiresArg: false,
         })
         .option("umask", {
