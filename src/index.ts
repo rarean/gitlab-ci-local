@@ -255,6 +255,16 @@ process.on("SIGUSR2", async () => {
             description: "Enable docker mount based caching",
             requiresArg: false,
         })
+        .option("cache", {
+            type: "boolean",
+            description: "Job memoization: skip re-running successful jobs with unchanged inputs and restore their artifacts instead (separate from the GitLab cache: keyword)",
+            requiresArg: false,
+        })
+        .option("clear-cache", {
+            type: "boolean",
+            description: "Delete the state dir cache folder, then exit",
+            requiresArg: false,
+        })
         .option("umask", {
             type: "boolean",
             description: "Sets docker user to 0:0",

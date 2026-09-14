@@ -1,0 +1,12 @@
+build:
+  stage: build
+  script:
+    - echo "built-once-marker" > built.txt
+    - echo "build-executed"
+  artifacts:
+    paths: [built.txt]
+deploy:
+  stage: deploy
+  needs: [build]
+  script:
+    - cat built.txt

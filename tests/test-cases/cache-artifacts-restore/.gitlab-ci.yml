@@ -1,0 +1,6 @@
+build:
+  stage: build
+  script:
+    - printf 'BIN\001\002\003PAYLOAD' > out.bin
+  artifacts:
+    paths: [out.bin]

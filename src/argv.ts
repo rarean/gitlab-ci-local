@@ -380,6 +380,14 @@ export class Argv {
         return this.map.get("mountCache") ?? false;
     }
 
+    get cache (): boolean {
+        return this.map.get("cache") ?? false;
+    }
+
+    get clearCache (): boolean {
+        return this.map.get("clearCache") ?? false;
+    }
+
     get artifactsToSource (): boolean {
         // TODO: default to false in 5.x.x
         return this.map.get("artifactsToSource") ?? true;

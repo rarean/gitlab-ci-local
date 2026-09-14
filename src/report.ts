@@ -105,6 +105,6 @@ function buildJobReport (job: Job, cwd: string, stateDir: string): ReportJob {
         services: job.services.map((service) => service.name),
         servicesLogPaths,
         artifacts: job.artifacts?.paths ?? [],
-        cached: false,
+        cached: job.cached,
     };
 }

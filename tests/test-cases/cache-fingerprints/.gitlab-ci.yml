@@ -1,0 +1,14 @@
+variables:
+  USER_VAR: stable
+
+fp-build:
+  stage: build
+  script:
+    - echo "a"
+    - echo "b"
+
+fp-deploy:
+  stage: deploy
+  needs: [fp-build]
+  script:
+    - echo "sha:$CI_COMMIT_SHA user:$USER_VAR"

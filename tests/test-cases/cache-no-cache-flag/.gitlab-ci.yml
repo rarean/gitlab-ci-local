@@ -1,0 +1,4 @@
+build:
+  stage: test
+  script:
+    - echo "no-cache-executed"

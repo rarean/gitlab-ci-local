@@ -16,6 +16,7 @@ import {Producers} from "./producers.js";
 import {VariablesFromFiles} from "./variables-from-files.js";
 import {Argv} from "./argv.js";
 import {WriteStreams} from "./write-streams.js";
+import {JobCache} from "./job-cache.js";
 import {init as initPredefinedVariables} from "./predefined-variables.js";
 
 const MAX_FUNCTIONS = 3;
@@ -33,13 +34,15 @@ export class Parser {
     readonly writeStreams: WriteStreams;
     readonly pipelineIid: number;
     readonly expandVariables: boolean;
+    readonly jobCache: JobCache | null;
 
-    private constructor (argv: Argv, writeStreams: WriteStreams, pipelineIid: number, jobs: Job[], expandVariables: boolean) {
+    private constructor (argv: Argv, writeStreams: WriteStreams, pipelineIid: number, jobs: Job[], expandVariables: boolean, jobCache: JobCache | null) {
         this.argv = argv;
         this.writeStreams = writeStreams;
         this.pipelineIid = pipelineIid;
         this.jobs = jobs;
         this.expandVariables = expandVariables;
+        this.jobCache = jobCache;
     }
 
     get stages (): readonly string[] {
@@ -54,8 +57,8 @@ export class Parser {
         return this._jobNamePad ?? 0;
     }
 
-    static async create (argv: Argv, writeStreams: WriteStreams, pipelineIid: number, jobs: Job[], expandVariables: boolean = true) {
-        const parser = new Parser(argv, writeStreams, pipelineIid, jobs, expandVariables);
+    static async create (argv: Argv, writeStreams: WriteStreams, pipelineIid: number, jobs: Job[], expandVariables: boolean = true, jobCache: JobCache | null = null) {
+        const parser = new Parser(argv, writeStreams, pipelineIid, jobs, expandVariables, jobCache);
         const time = process.hrtime();
         await parser.init();
         const warnings = await Validator.run(parser.jobs, parser.stages);
@@ -220,6 +223,7 @@ export class Parser {
                     nodeIndex: (jobData.parallel == null) ? null : nodeIndex,
                     nodesTotal: parallelMatrixVariablesList.length,
                     expandVariables: this.expandVariables,
+                    jobCache: this.jobCache,
                 });
                 const foundStage = this.stages.includes(job.stage);
                 assert(foundStage, chalk`{yellow stage:${job.stage}} not found for {blueBright ${job.name}}`);
@@ -260,6 +264,9 @@ export class Parser {
         this.jobs.forEach((job) => {
             job.producers = Producers.init(this.jobs, this.stages, job);
         });
+
+        // The memoization cache resolves chained producer fingerprints via the full job list
+        this.jobCache?.bindJobs(this.jobs);
     }
 
     private async loadInputs (cwd: string, argv: Argv): Promise<{[key: string]: any}> {

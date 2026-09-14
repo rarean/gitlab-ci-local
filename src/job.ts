@@ -20,6 +20,7 @@ import {globbySync} from "globby";
 import terminalLink from "terminal-link";
 import * as crypto from "node:crypto";
 import * as path from "node:path";
+import type {JobCache, JobCacheEntry} from "./job-cache.js";
 
 const GCL_SHELL_PROMPT_PLACEHOLDER = "<gclShellPromptPlaceholder>";
 interface JobOptions {
@@ -37,6 +38,7 @@ interface JobOptions {
     nodeIndex: number | null;
     nodesTotal: number;
     expandVariables: boolean;
+    jobCache: JobCache | null;
 }
 
 interface Cache {
@@ -129,6 +131,7 @@ export class Job {
     private _ciProjectDir: string | null = null;
     private _startTime?: [number, number];
     private _endTime?: [number, number];
+    private _cached = false;
 
     private readonly _filesToRm: string[] = [];
     private readonly _globalVariables: {[key: string]: string} = {};
@@ -137,6 +140,7 @@ export class Job {
     private readonly _containerVolumeNames: string[] = [];
     private readonly jobData: any;
     private readonly writeStreams: WriteStreams;
+    private readonly jobCache: JobCache | null;
 
     constructor (opt: JobOptions) {
         const jobData = opt.data;
@@ -157,6 +161,7 @@ export class Job {
         this.jobData = opt.data;
         this.pipelineIid = opt.pipelineIid;
         this._globalVariables = opt.globalVariables;
+        this.jobCache = opt.jobCache;
 
         this.inherit = {};
         this.inherit.variables = this.jobData.inherit?.variables ?? true;
@@ -664,6 +669,21 @@ If you know what you're doing and would like to suppress this warning, use one o
         return this._globalVariables;
     }
 
+    /** Merged, not-yet-expanded job variables, used for memoization fingerprinting. */
+    get rawVariables (): {[key: string]: string} {
+        return {...this._variables};
+    }
+
+    /** True when the job's result was restored from the memoization cache. */
+    get cached (): boolean {
+        return this._cached;
+    }
+
+    /** Jobs that can never be memoized: their outcome isn't a pure function of their inputs. */
+    get cacheable (): boolean {
+        return !this.trigger && !this.interactive && this.when !== "manual";
+    }
+
     async start (): Promise<void> {
         if (this.trigger) {
             await this.startTriggerPipeline();
@@ -677,6 +697,19 @@ If you know what you're doing and would like to suppress this warning, use one o
         this._startTime = process.hrtime();
         this._variables["CI_JOB_STARTED_AT"] = new Date().toISOString().split(".")[0] + "Z";
         const writeStreams = this.writeStreams;
+
+        // Job memoization: when a previous successful run had identical inputs,
+        // restore its artifacts and skip execution entirely. This happens before
+        // producer dotenv resolution, so cached jobs never touch containers,
+        // services, or producer state.
+        if (this.jobCache?.enabled && this.cacheable) {
+            const entry = this.jobCache.lookup(this);
+            if (entry) {
+                await this.restoreFromCache(entry);
+                return;
+            }
+        }
+
         this._dotenvVariables = await this.initProducerReportsDotenvVariables(writeStreams, Utils.expandVariables(this._variables));
         const expanded = Utils.unscape$$Variables(Utils.expandVariables({...this._variables, ...this._dotenvVariables}));
         const imageName = this.imageName(expanded);
@@ -794,6 +827,45 @@ If you know what you're doing and would like to suppress this warning, use one o
         if (this.jobData["coverage"]) {
             this._coveragePercent = await Utils.getCoveragePercent(argv.cwd, argv.stateDir, this.jobData["coverage"], safeJobName);
         }
+
+        // Persist a memoization entry so identical reruns can skip this job.
+        // Best-effort inside the cache; only successful jobs are ever stored.
+        if (this.jobCache?.enabled && this.cacheable && !this._cached && this.jobStatus === "success") {
+            await this.jobCache.store(this);
+        }
+    }
+
+    private async restoreFromCache (entry: JobCacheEntry) {
+        const cwd = this.argv.cwd;
+        const stateDir = this.argv.stateDir;
+        const expanded = Utils.expandVariables(this._variables);
+        const writeStreams = this.writeStreams;
+
+        writeStreams.stdout(chalk`${this.formattedJobName} {greenBright restored from cache}\n`);
+
+        await this.jobCache!.restoreArtifacts(this, entry);
+
+        // Mirror the output log a live run would have written, so --report-json
+        // logPath consumers keep pointing at an existing file.
+        await fs.outputFile(`${cwd}/${stateDir}/output/${this.safeJobName}.log`, `restored from cache (${entry.fingerprint.substring(0, 12)})\n`);
+
+        // Mirror copyArtifactsOut's artifactsToSource behavior, but only when
+        // this job actually exported artifacts.
+        if (entry.artifacts.length > 0 && this.artifactsToSource && (this.argv.shellIsolation || this.imageName(expanded))) {
+            await Utils.spawn(["rsync", "--exclude=/.gitlab-ci-reports/", "-a", `${cwd}/${stateDir}/artifacts/${this.safeJobName}/.`, cwd]);
+            const reportDotenv = Utils.expandText(this.artifacts?.reports?.dotenv ?? null, expanded);
+            if (reportDotenv != null) {
+                await Utils.spawn(["rsync", "-a", `${cwd}/${stateDir}/artifacts/${this.safeJobName}/.gitlab-ci-reports/dotenv/.`, cwd]);
+            }
+        }
+
+        this._coveragePercent = entry.coveragePercent;
+        this._afterScriptsExitCode = entry.afterScriptsExitCode;
+        this._prescriptsExitCode = 0; // NOTE: so that `this.finished` will implicitly be set to true
+        this._cached = true;
+        this._running = false;
+        this._endTime = this._endTime ?? process.hrtime(this._startTime);
+        this.printFinishedString();
     }
 
     private _cleanupPromise: Promise<void> | null = null;
@@ -1214,7 +1286,7 @@ If you know what you're doing and would like to suppress this warning, use one o
         });
     }
 
-    private imageName (vars: {[key: string]: string} = {}): string | null {
+    imageName (vars: {[key: string]: string} = {}): string | null {
         if (this.argv.forceShellExecutor) {
             return null;
         }
@@ -1232,14 +1304,14 @@ If you know what you're doing and would like to suppress this warning, use one o
         return imageName.includes(":") ? imageName : `${imageName}:latest`;
     }
 
-    private imageUser (vars: {[key: string]: string} = {}): string | null {
+    imageUser (vars: {[key: string]: string} = {}): string | null {
         const image = this.jobData["image"];
         if (!image) return null;
         if (!image["docker"]) return null;
         return Utils.expandText(image["docker"]["user"], vars);
     }
 
-    private imagePlatform (vars: {[key: string]: string} = {}): string | null {
+    imagePlatform (vars: {[key: string]: string} = {}): string | null {
         const image = this.jobData["image"];
         if (!image) return null;
         if (!image["docker"]) return null;
@@ -1429,7 +1501,9 @@ If you know what you're doing and would like to suppress this warning, use one o
             }
 
             time = process.hrtime();
-            let cmd = "shopt -s globstar nullglob dotglob\n";
+            let cmd = "shopt -s nullglob dotglob\n";
+            // globstar requires bash >= 4; degrade gracefully instead of failing the job on older bash
+            cmd += "shopt -s globstar 2>/dev/null || true\n";
             cmd += `mkdir -p ${Utils.safeBashString(cachePath + "/" + cacheName)}\n`;
             cmd += `rsync -Ra ${paths} ${Utils.safeBashString(cachePath + "/" + cacheName + "/.")} || true\n`;
 
@@ -1489,7 +1563,9 @@ If you know what you're doing and would like to suppress this warning, use one o
         }
 
         let time, endTime;
-        let cpCmd = "shopt -s globstar nullglob dotglob\n";
+        let cpCmd = "shopt -s nullglob dotglob\n";
+        // globstar requires bash >= 4; degrade gracefully instead of failing the job on older bash
+        cpCmd += "shopt -s globstar 2>/dev/null || true\n";
         cpCmd += `mkdir -p ${artifactsPath}/${safeJobName}\n`;
         cpCmd += "_gcl_files_tmp=\\$(mktemp)\n";
         for (const artifactPath of this.artifacts?.paths ?? []) {

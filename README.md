@@ -36,6 +36,7 @@ Get rid of all those dev specific shell scripts and make files.
     * [Tab completion](#tab-completion)
     * [Listing jobs](#list-pipeline-jobs)
     * [Run report](#run-report)
+    * [Job memoization](#job-memoization)
 * [Quirks](#quirks)
     * [Tracked Files](#tracked-files)
     * [Local Only](#local-only)
@@ -290,6 +291,31 @@ Field notes:
 - Non-run modes (`--preview`, `--list`, `--list-all`, `--list-json`, `--list-csv`, `--list-csv-all`,
   `--validate-dependency-chain`) never run jobs and therefore never write a report. In parent/child pipeline runs
   only the top-level invocation writes the report.
+
+### Job Memoization
+
+#### --cache
+
+`gitlab-ci-local --cache` enables content-addressed job memoization: jobs whose inputs are unchanged since a
+previous successful run are not re-executed — their artifacts are restored instead, and the job reports
+`"cached": true` in the `--report-json` output. This is the biggest latency win when iterating on a single file:
+only jobs that could be affected by the change re-run.
+
+The fingerprint covers, per job: scripts, image, services, non-volatile variables, relevant CLI options, the
+GitLab `cache:` keyword configuration, the contents of all git-tracked files, and — transitively — the
+fingerprints of every producer (`needs:`/`dependencies:`/previous stages), so upstream changes invalidate all
+downstream consumers. Volatile variables (`CI_JOB_ID`, `CI_PIPELINE_ID`, `CI_JOB_URL`, ...) are excluded; see
+`src/volatile-vars.ts` for the authoritative list.
+
+Notes:
+
+- Entries live under `<stateDir>/cache/` and only successful jobs are ever cached; failures, `when: manual` jobs,
+  and `@Interactive` jobs always re-run.
+- A corrupt entry or missing cached artifacts degrades to an ordinary cache miss with a warning — never a run
+  failure.
+- This is unrelated to the GitLab `cache:` keyword, which keeps working exactly as before.
+- `--no-cache` disables reads and writes for one invocation.
+- `--clear-cache` deletes `<stateDir>/cache/` and exits.
 
 ## Quirks
 

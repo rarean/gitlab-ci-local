@@ -1,0 +1,4 @@
+reader:
+  stage: test
+  script:
+    - cat input.txt

@@ -1,0 +1,5 @@
+fp-build:
+  stage: build
+  script:
+    - echo "b"
+    - echo "a"

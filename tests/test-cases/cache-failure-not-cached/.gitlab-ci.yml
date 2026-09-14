@@ -1,0 +1,5 @@
+failing:
+  stage: test
+  script:
+    - echo "failing-executed"
+    - exit 1

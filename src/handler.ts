@@ -11,6 +11,7 @@ import {WriteStreams} from "./write-streams.js";
 import {cleanupJobResources, Job} from "./job.js";
 import {Utils} from "./utils.js";
 import {Argv} from "./argv.js";
+import {JobCache} from "./job-cache.js";
 import assert from "node:assert";
 
 const generateGitIgnore = (cwd: string, stateDir: string) => {
@@ -34,6 +35,12 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
     if (argv.completion) {
         yargs(process.argv.slice(2)).scriptName("gitlab-ci-local").showCompletionScript();
         return [];
+    }
+
+    if (argv.clearCache) {
+        await fs.rm(`${cwd}/${stateDir}/cache`, {recursive: true, force: true});
+        writeStreams.stdout(chalk`{greenBright cleared} ${path.resolve(cwd, stateDir)}/cache\n`);
+        return cleanupJobResources(jobs);
     }
 
     assert(fs.existsSync(`${cwd}/${file}`), `${path.resolve(cwd)}/${file} could not be found`);
@@ -82,7 +89,8 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
         } else {
             pipelineIid = await state.getPipelineIid(cwd, stateDir);
         }
-        parser = await Parser.create(argv, writeStreams, pipelineIid, jobs);
+        const jobCache = argv.cache ? await JobCache.init(argv, writeStreams) : null;
+        parser = await Parser.create(argv, writeStreams, pipelineIid, jobs, true, jobCache);
         await Utils.rsyncTrackedFiles(cwd, stateDir, path.resolve(cwd, argv.ignoresFile), ".docker");
         await Commander.runJobs(argv, parser, writeStreams, reportJsonPath);
         if (argv.needs || argv.onlyNeeds) {
@@ -95,7 +103,8 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
         generateGitIgnore(cwd, stateDir);
         const time = process.hrtime();
         const pipelineIid = await state.getPipelineIid(cwd, stateDir);
-        parser = await Parser.create(argv, writeStreams, pipelineIid, jobs);
+        const jobCache = argv.cache ? await JobCache.init(argv, writeStreams) : null;
+        parser = await Parser.create(argv, writeStreams, pipelineIid, jobs, true, jobCache);
         await Utils.rsyncTrackedFiles(cwd, stateDir, path.resolve(cwd, argv.ignoresFile), ".docker");
         await Commander.runJobsInStage(argv, parser, writeStreams, reportJsonPath);
         writeStreams.stderr(chalk`{grey pipeline finished} in {grey ${prettyHrtime(process.hrtime(time))}}\n`);
@@ -106,7 +115,8 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
         generateGitIgnore(cwd, stateDir);
         const time = process.hrtime();
         const pipelineIid = await state.incrementPipelineIid(cwd, stateDir);
-        parser = await Parser.create(argv, writeStreams, pipelineIid, jobs);
+        const jobCache = argv.cache ? await JobCache.init(argv, writeStreams) : null;
+        parser = await Parser.create(argv, writeStreams, pipelineIid, jobs, true, jobCache);
         await Utils.rsyncTrackedFiles(cwd, stateDir, path.resolve(cwd, argv.ignoresFile), ".docker");
         await Commander.runPipeline(argv, parser, writeStreams, reportJsonPath);
         if (childPipelineDepth == 0) writeStreams.stderr(chalk`{grey pipeline finished} in {grey ${prettyHrtime(process.hrtime(time))}}\n`);

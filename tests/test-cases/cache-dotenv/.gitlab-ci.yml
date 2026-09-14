@@ -1,0 +1,6 @@
+build:
+  stage: build
+  script:
+    - echo "BUILD_VERSION=CacheMe" > build.env
+  artifacts:
+    reports: {dotenv: build.env}
