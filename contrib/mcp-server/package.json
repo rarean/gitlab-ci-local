@@ -1,0 +1,21 @@
+{
+  "name": "gitlab-ci-local-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Thin MCP wrapper exposing gitlab-ci-local as tools: discovery, execution, logs. No logic lives here — the CLI is the single source of truth.",
+  "type": "module",
+  "bin": {
+    "gitlab-ci-local-mcp-server": "src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.x"
+  },
+  "devDependencies": {
+    "@types/bun": "1.x.x"
+  }
+}

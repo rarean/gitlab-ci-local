@@ -76,6 +76,35 @@ export async function writeReport (reportJsonPath: string, report: Report) {
     await fs.move(tmpPath, reportJsonPath, {overwrite: true});
 }
 
+// Registered by handler() for the duration of a run, so a signal-driven
+// cancellation can still write whatever job states exist (see cleanupAndExit
+// in src/index.ts). Null when no report was requested or the run finished.
+let pendingReportWriter: (() => Promise<void>) | null = null;
+
+export function registerReportWriter (writer: (() => Promise<void>) | null): void {
+    pendingReportWriter = writer;
+}
+
+/**
+ * Writes the pending report, if any. Used on the cancellation path: a run
+ * killed by SIGINT/SIGTERM/SIGHUP never reaches the normal write in
+ * Commander.printReport, but an agent cancelling a hung job still wants the
+ * partial results. Never throws — a failure here must not block cleanup —
+ * but it is reported on stderr so a lost report is never silent.
+ */
+export async function writePendingReport (): Promise<boolean> {
+    const writer = pendingReportWriter;
+    pendingReportWriter = null;
+    if (!writer) return false;
+    try {
+        await writer();
+        return true;
+    } catch (e: any) {
+        process.stderr.write(`Could not write the report for the cancelled run: ${e?.message ?? e}\n`);
+        return false;
+    }
+}
+
 function buildJobReport (job: Job, cwd: string, stateDir: string): ReportJob {
     const durationHrtime = job.durationHrtime;
     const logPath = job.started ? path.join(stateDir, "output", `${job.safeJobName}.log`) : null;

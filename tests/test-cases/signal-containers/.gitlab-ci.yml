@@ -1,0 +1,6 @@
+container-sleep-job:
+  stage: test
+  image: docker.io/library/alpine:3.20
+  script:
+    - echo "in container"
+    - sleep 300

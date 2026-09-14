@@ -15,7 +15,7 @@ CLI tool to run GitLab CI pipelines locally. Written in TypeScript, built with B
 - **Never run the full test suite** (`bun run test`), it takes too long. Always run targeted tests: `bunx vitest run tests/test-cases/<name>/`
 - **Timeout**: Configured in `vitest.config.ts` (`testTimeout: 60_000`).
 - **Docker tests**: Tests under `dind-*` require Docker and are slow.
-- **depcheck ignores**: `depcheck,@types/bun,@types/bun-types,vitest,@vitest/coverage-v8`
+- **depcheck ignores**: `depcheck,@types/bun,@types/bun-types,vitest,@vitest/coverage-v8,@modelcontextprotocol/sdk,zod` (the last two live only in `contrib/mcp-server/`, which has its own `package.json`)
 
 ## Schema
 

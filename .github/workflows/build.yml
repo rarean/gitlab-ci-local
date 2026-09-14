@@ -69,7 +69,7 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      - run: bunx depcheck --ignores depcheck,@types/bun,@types/bun-types,vitest,@vitest/coverage-v8
+      - run: bunx depcheck --ignores depcheck,@types/bun,@types/bun-types,vitest,@vitest/coverage-v8,@modelcontextprotocol/sdk,zod
 
   test:
     runs-on: ubuntu-24.04

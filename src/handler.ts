@@ -14,6 +14,7 @@ import {Argv} from "./argv.js";
 import {JobCache} from "./job-cache.js";
 import {validateDeterminism} from "./determinism.js";
 import {createIsolatedStateDir, cleanupIsolatedStateDirs} from "./isolated.js";
+import {buildReport, registerReportWriter, writeReport} from "./report.js";
 import assert from "node:assert";
 
 const generateGitIgnore = (cwd: string, stateDir: string) => {
@@ -43,6 +44,14 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
     // Only the top-level invocation writes the --report-json file, child pipelines must not overwrite it.
     const reportJsonPath = childPipelineDepth === 0 ? argv.reportJson : null;
     let parser: Parser;
+
+    // A signal-cancelled run never reaches the normal report write; hand the
+    // cancellation path (cleanupAndExit in src/index.ts) a writer that captures
+    // whatever job states exist at that moment.
+    const registerCancelReport = () => {
+        if (reportJsonPath === null) return;
+        registerReportWriter(() => writeReport(reportJsonPath, buildReport({pipelineIid: parser.pipelineIid, jobs, cwd, stateDir})));
+    };
 
     try {
         if (argv.completion) {
@@ -110,8 +119,10 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
             const jobCache = argv.cache ? await JobCache.init(argv, writeStreams) : null;
             parser = await Parser.create(argv, writeStreams, pipelineIid, jobs, true, jobCache);
             validateDeterminism(parser, writeStreams);
+            registerCancelReport();
             await Utils.rsyncTrackedFiles(cwd, stateDir, path.resolve(cwd, argv.ignoresFile), ".docker");
             await Commander.runJobs(argv, parser, writeStreams, reportJsonPath);
+            registerReportWriter(null);
             if (argv.needs || argv.onlyNeeds) {
                 writeStreams.stderr(chalk`{grey pipeline finished} in {grey ${prettyHrtime(process.hrtime(time))}}\n`);
             }
@@ -125,8 +136,10 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
             const jobCache = argv.cache ? await JobCache.init(argv, writeStreams) : null;
             parser = await Parser.create(argv, writeStreams, pipelineIid, jobs, true, jobCache);
             validateDeterminism(parser, writeStreams);
+            registerCancelReport();
             await Utils.rsyncTrackedFiles(cwd, stateDir, path.resolve(cwd, argv.ignoresFile), ".docker");
             await Commander.runJobsInStage(argv, parser, writeStreams, reportJsonPath);
+            registerReportWriter(null);
             writeStreams.stderr(chalk`{grey pipeline finished} in {grey ${prettyHrtime(process.hrtime(time))}}\n`);
         } else {
             if (argv.registry) {
@@ -138,8 +151,10 @@ export async function handler (args: any, writeStreams: WriteStreams, jobs: Job[
             const jobCache = argv.cache ? await JobCache.init(argv, writeStreams) : null;
             parser = await Parser.create(argv, writeStreams, pipelineIid, jobs, true, jobCache);
             validateDeterminism(parser, writeStreams);
+            registerCancelReport();
             await Utils.rsyncTrackedFiles(cwd, stateDir, path.resolve(cwd, argv.ignoresFile), ".docker");
             await Commander.runPipeline(argv, parser, writeStreams, reportJsonPath);
+            registerReportWriter(null);
             if (childPipelineDepth == 0) writeStreams.stderr(chalk`{grey pipeline finished} in {grey ${prettyHrtime(process.hrtime(time))}}\n`);
         }
         writeStreams.flush();

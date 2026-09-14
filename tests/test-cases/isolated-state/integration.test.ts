@@ -26,7 +26,9 @@ function listIsolatedSiblings (): string[] {
 test("isolated-state <fresh state per invocation, no residue>", async () => {
     const tmpBefore = listIsolatedTempDirs();
     const siblingsBefore = listIsolatedSiblings();
-    const reportPath = `${cwd}/report.json`;
+    // Report paths live under a gitignored name so test reruns never dirty
+    // the tree (tests/test-cases/.gitignore covers .gitlab-ci-local*).
+    const reportPath = `${cwd}/.gitlab-ci-local-isolated-reports/report.json`;
     fs.rmSync(reportPath, {force: true});
 
     const first = new WriteStreamsMock();
@@ -61,7 +63,7 @@ test("isolated-state <user --state-dir becomes the temp dir prefix>", async () =
 
 test("isolated-state <failing run leaves no temp dir behind>", async () => {
     const tmpBefore = listIsolatedTempDirs();
-    const reportPath = `${cwd}/failing-report.json`;
+    const reportPath = `${cwd}/.gitlab-ci-local-isolated-reports/failing-report.json`;
     fs.rmSync(reportPath, {force: true});
 
     const writeStreams = new WriteStreamsMock();

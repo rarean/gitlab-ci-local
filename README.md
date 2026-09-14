@@ -39,6 +39,10 @@ Get rid of all those dev specific shell scripts and make files.
     * [Job memoization](#job-memoization)
     * [Determinism mode](#determinism-mode)
     * [Isolated runs](#isolated-runs)
+* [Agent & CI-bot usage](#agent--ci-bot-usage)
+    * [The contract](#the-contract)
+    * [Concurrent agents](#concurrent-agents)
+    * [Signals and recovery](#signals-and-recovery)
 * [Quirks](#quirks)
     * [Tracked Files](#tracked-files)
     * [Local Only](#local-only)
@@ -371,6 +375,93 @@ path — normal completion, failing jobs, errors, and interrupts. Nothing from p
   state dir) — use it for verification runs, not iteration loops.
 - `--report-json` still works and is written to the path you give it, but `logPath` entries in the report point
   into the temp dir, which is gone by the time you read them.
+
+## Agent & CI-bot usage
+
+gitlab-ci-local is a single command an agent or CI bot can drive without parsing human output. This section is
+the whole contract; every capability below is a plain CLI flag, documented in the sections above.
+
+### The contract
+
+**1. Discover jobs first.** Never guess job names — enumerate them:
+
+```bash
+gitlab-ci-local --list-json          # jobs, stages, when, needs
+```
+
+**2. Select what to run.**
+
+```bash
+gitlab-ci-local build                 # one job
+gitlab-ci-local build --needs         # the job plus everything it needs
+gitlab-ci-local build --only-needs    # its dependencies, not the job itself
+gitlab-ci-local --stage test          # a whole stage
+gitlab-ci-local --validate-dependency-chain   # dry checks, nothing runs
+gitlab-ci-local --preview             # expanded pipeline YAML, nothing runs
+```
+
+**3. Read results from the report, not the prose.**
+
+```bash
+gitlab-ci-local build --needs --report-json report.json
+```
+
+The report carries per-job `status`, `prescriptsExitCode`, `durationMs`, and `logPath` (the job's full log on
+disk; service logs live under `<stateDir>/services-output/`). It is written even when jobs fail, and even when
+the run is cancelled by a signal — with whatever job states existed at cancellation time.
+
+**4. Branch on the exit code.** The process exits `0` when the selected jobs passed, and non-zero when a
+non-`allowFailure` job failed — or when the invocation itself errored before jobs ran (unknown options, schema
+validation, a mistyped job name). An agent can decide from the exit code alone and use the report for detail;
+when in doubt, the report tells whether any job actually ran.
+
+**5. Iterate with memoization.** `--cache` skips re-running jobs whose inputs are unchanged since the last
+successful run; pass `--no-cache` when a stale result is suspected, `--clear-cache` to reset entirely.
+
+**6. Verify with determinism.** `--deterministic=strict --isolated` is the reproduce-from-scratch gate: pinned
+image references only, remote includes pinned to first fetch, fresh state, zero residue.
+`--list-json --deterministic=strict` checks the pipeline specification without running anything.
+
+**7. Privilege is a decision, not a default.** Jobs run in unprivileged containers. Only pipelines using dind
+(`docker:dind` services) need `--privileged`; an agent must treat adding it as a deliberate, user-visible
+decision and never add it silently.
+
+**8. Piped output is plain text.** When stdout/stderr are not TTYs, colors degrade automatically — no ANSI
+escapes. Pipe both streams freely, but treat the report file as the source of truth, never the prose.
+
+### Concurrent agents
+
+State is per-`--state-dir`, and nothing else is shared-state-safe. Give each concurrent agent its own:
+
+```bash
+gitlab-ci-local build --state-dir .gcl-agent-$$ --report-json /tmp/report-$$.json
+```
+
+Without distinct state dirs, two invocations contend for the same `pipelineIid`, memoization entries, and
+artifact directories.
+
+### Signals and recovery
+
+`SIGINT`/`SIGTERM`/`SIGHUP` trigger cleanup of the current invocation's containers, networks, and volumes
+before exiting (exit codes 130/143/129), and write the `--report-json` file for the cancelled run. Note that
+shell-executor jobs spawn script processes directly on the host; a cancelled one may leave its script process
+running until the script itself notices.
+
+Everything gitlab-ci-local creates is named deterministically, so a hard-killed run (`SIGKILL` gets no
+cleanup) can be swept manually:
+
+```bash
+docker rm -vf $(docker ps -aq --filter name=gcl-)                  # wait + helper containers
+docker volume rm $(docker volume ls -q --filter name=gcl-)          # build/tmp/cert volumes
+docker network rm $(docker network ls -q --filter name=gitlab-ci-local-)   # service networks
+```
+
+Job containers and volumes are prefixed `gcl-<jobName>-<jobId>…`; service networks `gitlab-ci-local-<jobId>`.
+With podman, substitute the equivalent commands for your container executable.
+
+Harnesses that prefer tools over shell can use the optional MCP wrapper in
+[`contrib/mcp-server/`](contrib/mcp-server/): `list_jobs`, `run_jobs`, `get_log`, and
+`clear_cache`, each a thin shell-out to this same contract — nothing the bare CLI cannot do.
 
 ## Quirks
 

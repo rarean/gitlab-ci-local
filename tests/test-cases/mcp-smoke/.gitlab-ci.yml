@@ -1,0 +1,3 @@
+smoke-job:
+  stage: test
+  script: echo "smoke"

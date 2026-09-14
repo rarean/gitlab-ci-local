@@ -12,6 +12,7 @@ import {Argv, stripGclVariableEnvVars, injectGclVariableEnvVars} from "./argv.js
 import {AssertionError} from "assert";
 import {Job, cleanupJobResources} from "./job.js";
 import {cleanupIsolatedStateDirs} from "./isolated.js";
+import {writePendingReport} from "./report.js";
 import {GitlabRunnerPresetValues} from "./gitlab-preset.js";
 import packageJson from "../package.json";
 
@@ -23,6 +24,11 @@ async function cleanupAndExit (code: number) {
     // First caller's exit code wins — subsequent callers join the in-flight cleanup.
     if (cleanupAndExitPromise) return cleanupAndExitPromise;
     cleanupAndExitPromise = (async () => {
+        // Partial results first: a cancelled --report-json run still gets a
+        // report with whatever job states existed at cancellation time.
+        if (await writePendingReport()) {
+            process.stderr.write(chalk`{grey report written for the cancelled run}\n`);
+        }
         await Promise.all([
             cleanupJobResources(jobs),
             cleanupIsolatedStateDirs(),

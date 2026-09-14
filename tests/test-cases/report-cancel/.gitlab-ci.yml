@@ -1,0 +1,5 @@
+sleep-job:
+  stage: test
+  script:
+    - echo "starting"
+    - sleep 30
